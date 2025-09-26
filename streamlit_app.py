@@ -1,106 +1,109 @@
 import streamlit as st
 import pandas as pd
-import datetime
+import matplotlib.pyplot as plt
+from datetime import datetime
 
-st.set_page_config(page_title="Personal Finance Tracker", layout="wide")
-
-# ---- SESSION STATE STORAGE ----
-if "incomes" not in st.session_state:
-    st.session_state["incomes"] = []
+# Initialize session state
+if "income" not in st.session_state:
+    st.session_state["income"] = []
 if "expenses" not in st.session_state:
     st.session_state["expenses"] = []
 
-# ---- SUPPORTED CURRENCIES ----
-CURRENCIES = ["USD", "INR", "EUR", "GBP", "JPY"]
+# Convert session state to DataFrame
+def get_dataframes():
+    df_income = pd.DataFrame(st.session_state["income"])
+    df_expense = pd.DataFrame(st.session_state["expenses"])
+    return df_income, df_expense
 
-# ---- HELPERS ----
-def add_income(amount, date, source, notes, currency):
-    st.session_state["incomes"].append({
-        "amount": float(amount),
-        "date": pd.to_datetime(date),
-        "source": source,
-        "notes": notes,
-        "currency": currency
-    })
+def add_income():
+    st.header("➕ Add Income")
+    amount = st.number_input("Amount", min_value=0.0, step=0.01)
+    source = st.text_input("Source (e.g., Salary, Freelance, Gift)")
+    currency = st.selectbox("Currency", ["₹", "$", "€", "£", "¥"])
+    date = st.date_input("Date", datetime.today())
+    notes = st.text_area("Notes (Optional)")
 
-def add_expense(amount, date, category, etype, notes, currency):
-    st.session_state["expenses"].append({
-        "amount": float(amount),
-        "date": pd.to_datetime(date),
-        "category": category,
-        "type": etype,
-        "notes": notes,
-        "currency": currency
-    })
+    if st.button("Add Income"):
+        st.session_state["income"].append({
+            "amount": amount,
+            "source": source,
+            "currency": currency,
+            "date": str(date),
+            "notes": notes
+        })
+        st.success("Income added successfully!")
+
+def add_expense():
+    st.header("➖ Add Expense")
+    amount = st.number_input("Amount", min_value=0.0, step=0.01, key="exp_amount")
+    category = st.text_input("Category (e.g., Food, Travel, Bills)")
+    exp_type = st.selectbox("Type", ["Need", "Want", "Investment", "Insurance"])
+    currency = st.selectbox("Currency", ["₹", "$", "€", "£", "¥"], key="exp_currency")
+    date = st.date_input("Date", datetime.today(), key="exp_date")
+    notes = st.text_area("Notes (Optional)", key="exp_notes")
+
+    if st.button("Add Expense"):
+        st.session_state["expenses"].append({
+            "amount": amount,
+            "category": category,
+            "type": exp_type,
+            "currency": currency,
+            "date": str(date),
+            "notes": notes
+        })
+        st.success("Expense added successfully!")
 
 def show_summary():
-    df_income = pd.DataFrame(st.session_state["incomes"])
-    df_expense = pd.DataFrame(st.session_state["expenses"])
+    st.header("📊 Summary")
 
-    st.subheader("📊 Summary")
+    df_income, df_expense = get_dataframes()
 
     if df_income.empty and df_expense.empty:
-        st.info("No data yet. Add income or expenses to see your dashboard.")
+        st.info("No data yet. Add income or expenses to see the summary.")
         return
 
-    # Display metrics grouped by currency
-    currencies = sorted(set(df_income["currency"].unique()).union(set(df_expense["currency"].unique())))
-    for cur in currencies:
-        st.markdown(f"### Currency: {cur}")
+    # Safely handle missing columns
+    currencies_income = set(df_income["currency"].unique()) if "currency" in df_income.columns else set()
+    currencies_expense = set(df_expense["currency"].unique()) if "currency" in df_expense.columns else set()
+    currencies = sorted(currencies_income.union(currencies_expense))
 
-        total_income = df_income[df_income["currency"] == cur]["amount"].sum() if not df_income.empty else 0
-        total_expense = df_expense[df_expense["currency"] == cur]["amount"].sum() if not df_expense.empty else 0
-        balance = total_income - total_expense
+    if not currencies:
+        st.info("No currency data available yet.")
+        return
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Income", f"{cur} {total_income:,.2f}")
-        col2.metric("Total Expense", f"{cur} {total_expense:,.2f}")
-        col3.metric("Balance", f"{cur} {balance:,.2f}")
+    selected_currency = st.selectbox("Select currency to view summary", currencies)
 
-        # Charts per currency
-        if not df_expense.empty:
-            df_cur_exp = df_expense[df_expense["currency"] == cur]
-            if not df_cur_exp.empty:
-                st.bar_chart(df_cur_exp.groupby("category")["amount"].sum())
+    # Filter
+    income_filtered = df_income[df_income["currency"] == selected_currency] if "currency" in df_income.columns else pd.DataFrame()
+    expense_filtered = df_expense[df_expense["currency"] == selected_currency] if "currency" in df_expense.columns else pd.DataFrame()
 
-        if not df_income.empty:
-            df_cur_inc = df_income[df_income["currency"] == cur]
-            if not df_cur_inc.empty:
-                st.line_chart(df_cur_inc.groupby(df_cur_inc["date"].dt.to_period("M"))["amount"].sum())
+    total_income = income_filtered["amount"].sum() if "amount" in income_filtered.columns else 0
+    total_expense = expense_filtered["amount"].sum() if "amount" in expense_filtered.columns else 0
+    balance = total_income - total_expense
 
-# ---- UI ----
-st.title("💰 Personal Finance Tracker (Multi-Currency)")
+    st.metric("Total Income", f"{selected_currency} {total_income:,.2f}")
+    st.metric("Total Expense", f"{selected_currency} {total_expense:,.2f}")
+    st.metric("Balance", f"{selected_currency} {balance:,.2f}")
 
-tab1, tab2, tab3 = st.tabs(["➕ Add Income", "➖ Add Expense", "📊 Dashboard"])
+    if not expense_filtered.empty and "type" in expense_filtered.columns:
+        fig, ax = plt.subplots()
+        expense_filtered.groupby("type")["amount"].sum().plot(kind="pie", autopct="%1.1f%%", ax=ax)
+        ax.set_ylabel("")
+        ax.set_title("Expenses by Type")
+        st.pyplot(fig)
 
-with tab1:
-    st.header("Add Income")
-    with st.form("income_form"):
-        col1, col2 = st.columns(2)
-        amount = col1.number_input("Amount", min_value=0.0, step=0.01)
-        date = col2.date_input("Date", datetime.date.today())
-        currency = st.selectbox("Currency", CURRENCIES)
-        source = st.selectbox("Source", ["Salary", "Business", "Investments", "Other"])
-        notes = st.text_area("Notes (Optional)")
-        submitted = st.form_submit_button("Add Income")
-        if submitted and amount > 0:
-            add_income(amount, date, source, notes, currency)
-            st.success(f"Income added in {currency}!")
+def main():
+    st.title("💰 Personal Finance Tracker")
 
-with tab2:
-    st.header("Add Expense")
-    with st.form("expense_form"):
-        col1, col2 = st.columns(2)
-        amount = col1.number_input("Amount", min_value=0.0, step=0.01)
-        date = col2.date_input("Date", datetime.date.today())
-        currency = st.selectbox("Currency", CURRENCIES)
-        category = st.selectbox("Category", ["Food", "Transport", "Housing", "Entertainment", "Other"])
-        etype = st.radio("Type", ["Need", "Want"])
-        notes = st.text_area("Notes (Optional)")
-        submitted = st.form_submit_button("Add Expense")
-        if submitted and amount > 0:
-            add_expense(amount, date, category, etype, notes, currency)
-            st.success(f"Expense added in {currency}!")
+    menu = ["Add Income", "Add Expense", "Summary"]
+    choice = st.sidebar.selectbox("Menu", menu)
 
-with tab3:
-    show_summary()
+    if choice == "Add Income":
+        add_income()
+    elif choice == "Add Expense":
+        add_expense()
+    elif choice == "Summary":
+        show_summary()
+
+if __name__ == "__main__":
+    main()
